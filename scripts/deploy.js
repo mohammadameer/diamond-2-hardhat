@@ -3,6 +3,10 @@
 
 const { getSelectors, FacetCutAction } = require('./libraries/diamond.js')
 
+// abis
+const MRHBTokenABI = require("../artifacts/contracts/facets/MRHBTokenFacet.sol/MRHBTokenFacet.json")
+const { ethers } = require('hardhat')
+
 async function deployDiamond () {
   const accounts = await ethers.getSigners()
   const contractOwner = accounts[0]
@@ -32,7 +36,7 @@ async function deployDiamond () {
   console.log('Deploying facets')
   const FacetNames = [
     'DiamondLoupeFacet',
-    'OwnershipFacet'
+    'OwnershipFacet',
   ]
   const cut = []
   for (const FacetName of FacetNames) {
@@ -49,18 +53,70 @@ async function deployDiamond () {
 
   // upgrade diamond with facets
   console.log('')
-  console.log('Diamond Cut:', cut)
+  // console.log('Diamond Cut:', cut)
   const diamondCut = await ethers.getContractAt('IDiamondCut', diamond.address)
   let tx
   let receipt
   // call to init function
   let functionCall = diamondInit.interface.encodeFunctionData('init')
   tx = await diamondCut.diamondCut(cut, diamondInit.address, functionCall)
-  console.log('Diamond cut tx: ', tx.hash)
   receipt = await tx.wait()
   if (!receipt.status) {
     throw Error(`Diamond upgrade failed: ${tx.hash}`)
   }
+
+  // testing adding/replacing/removing functions
+
+  // deploy mrhb token contract
+  const MRHBTokenFactory = await ethers.getContractFactory('MRHBTokenFacet')
+  const mrhbToken = await MRHBTokenFactory.deploy()
+  await mrhbToken.deployed()
+
+  console.log(`MRHB Token deployed: ${mrhbToken.address}`)
+
+  // add mrhb token state & functions to diamond
+  tx = await diamondCut.diamondCut([{
+    facetAddress: mrhbToken.address,
+      action: FacetCutAction.Add,
+      functionSelectors: getSelectors(mrhbToken)
+  }], diamondInit.address, functionCall)
+
+  // initialize diamond with mrhb token abis
+  const diamondMRHBToken = new ethers.Contract(diamond.address, MRHBTokenABI.abi, contractOwner);
+
+  tx = await diamondMRHBToken.initialize(0, "MRHB Network", "MRHB")
+
+  // test getting and increasing mrhb token supply
+  tx = await diamondMRHBToken.totalSupply()
+  console.log("total supply: ", ethers.utils.formatUnits(tx))
+  
+  tx = await diamondMRHBToken.mint(contractOwner.address, ethers.utils.parseUnits("100"));
+
+  tx = await diamondMRHBToken.totalSupply()
+  console.log("total supply: ", ethers.utils.formatUnits(tx))
+  
+  // remove total Supply function
+  tx = await diamondCut.diamondCut([{
+    facetAddress: ethers.constants.AddressZero,
+    action: FacetCutAction.Remove,
+    functionSelectors: [mrhbToken.interface.getSighash("totalSupply()")]
+  }], diamondInit.address, functionCall);
+
+  // console.log("funcs: ", diamondMRHBToken.interface.functions)
+
+  tx = await diamondMRHBToken.name()
+  console.log("name: ", tx)
+
+
+  try {
+    tx = await diamondMRHBToken.totalSupply()
+    console.log("total supply: ", ethers.utils.formatUnits(tx))
+  } catch {
+    console.log("Diamond: Function does not exist")
+  }
+
+
+  
   console.log('Completed diamond cut')
   return diamond.address
 }

@@ -25,7 +25,7 @@ contract Diamond {
             action: IDiamondCut.FacetCutAction.Add, 
             functionSelectors: functionSelectors
         });
-        LibDiamond.diamondCut(cut, address(0), "");        
+        LibDiamond.diamondCut(cut, address(0), new bytes(0));        
     }
 
     // Find facet for function that is called and execute the
